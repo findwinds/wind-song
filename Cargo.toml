@@ -1,0 +1,11 @@
+[package]
+name = "wind-song"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reqwest = { version = "0.11", features = ["json"] } # 用于发送 HTTP 请求
+serde = { version = "1.0", features = ["derive"] }  # 用于序列化和反序列化
+serde_json = "1.0"                                 # 用于处理 JSON 数据
+tokio = { version = "1", features = ["full"] }     # 异步运行时（reqwest 需要）
+ffmpeg-next = "7.1.0"

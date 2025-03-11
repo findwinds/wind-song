@@ -1,0 +1,31 @@
+# Cargo-generated files
+target/
+
+# Environment files
+.env
+
+# Editor and IDE files
+.vscode/
+.idea/
+.DS_Store
+
+# Temporary and cache files
+**/*.tmp
+**/*.log
+**/__pycache__/
+
+# Documentation
+target/doc/
+
+# Backup files
+**/*.rs.bk
+
+# Vendor directory (if not using)
+/vendor/
+
+# Cargo.lock (for library projects)
+Cargo.lock
+
+# custom
+/downloads/
+/output/
