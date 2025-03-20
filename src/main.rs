@@ -29,7 +29,14 @@ async fn main() -> Result<()> {
     let input_path = input_output_path.0;
     let output_path = input_output_path.1;
     wind_song::convert_input_to_mp3(&*input_path, &*output_path);
+    delete_download_file(input_path)?;
     println!("保存的文件路径: {}", output_path);
+    Ok(())
+}
+
+fn delete_download_file(input_path: String) -> Result<()> {
+    //删除缓存文件
+    fs::remove_file(input_path).context("删除缓存文件错误")?;
     Ok(())
 }
 
@@ -67,7 +74,10 @@ async fn download(bid: &str) -> Result<String> {
     if !response.status().is_success() {
         return Err(anyhow!("请求音频流 URL 失败: {}", response.status()));
     }
-    let json: Value = response.json().await.context("解析音频流 URL 失败BV13G411Q76u")?;
+    let json: Value = response
+        .json()
+        .await
+        .context("解析音频流 URL 失败")?;
     let audio_array = json["data"]["dash"]["audio"]
         .as_array()
         .context("无法获取音频流数组")?;
@@ -85,6 +95,9 @@ async fn download(bid: &str) -> Result<String> {
     let response = reqwest::get(&final_audio_url)
         .await
         .context("下载音频文件失败")?;
+    if !response.status().is_success() {
+        return Err(anyhow!("下载音频文件失败: {:#?}",  response.status()))
+    }
     let content = response.bytes().await.context("读取音频文件内容失败")?;
 
     // 创建下载目录
