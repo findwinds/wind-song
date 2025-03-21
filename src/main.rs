@@ -2,10 +2,12 @@ use anyhow::Context;
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use serde_json::Value;
-use std::fs;
+use std::{fs};
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
+use tokio::io;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Debug, Deserialize)]
 struct ApiResponse {
@@ -23,9 +25,53 @@ pub struct VideoData {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let bid = parse_cil()?;
+    println!("欢迎使用文件管理工具。输入 'help' 查看可用命令。");
+
+    let stdin = io::stdin();
+    let mut reader = BufReader::new(stdin);
+    let mut buffer = String::new();
+
+    loop {
+        buffer.clear();
+        print!("> ");
+        io::stdout().flush().await?;
+        reader.read_line(&mut buffer).await?;
+        let command = buffer.trim();
+        match command {
+            "help" => {
+                println!("可用命令：");
+                println!("  download <BID> - 下载文件");
+                println!("  exit - 退出程序");
+            }
+            "exit" => {
+                println!("退出程序。");
+                break;
+            }
+            cmd if cmd.starts_with("download ") => {
+                let bid = cmd.split_whitespace().nth(1).unwrap_or("");
+                if bid.is_empty() {
+                    println!("请提供有效的 BID");
+                    continue;
+                }
+                match download_on_bid(&bid).await {
+                    Ok(()) => {
+                        println!("下载完成");
+                    }
+                    Err(err) => println!("下载文件时出错: {}", err)
+                }
+            }
+            _ => {
+                println!("未知命令。输入 'help' 查看可用命令。");
+            }
+        }
+        print!("> ");
+    }
+    Ok(())
+}
+
+async fn download_on_bid(bid: &str) -> Result<()> {
     let m4s_file_name = download(&bid).await?;
-    let input_output_path = build_path(m4s_file_name, bid)?;
+    let input_output_path = build_path(m4s_file_name, bid.parse()?)?;
     let input_path = input_output_path.0;
     let output_path = input_output_path.1;
     wind_song::convert_input_to_mp3(&*input_path, &*output_path);
@@ -38,17 +84,6 @@ fn delete_download_file(input_path: String) -> Result<()> {
     //删除缓存文件
     fs::remove_file(input_path).context("删除缓存文件错误")?;
     Ok(())
-}
-
-fn parse_cil() -> Result<String> {
-    // 将返回类型改为 String
-    println!("请输入视频编号：");
-    let mut bid = String::new();
-    std::io::stdin()
-        .read_line(&mut bid)
-        .context("读取输入时发生错误")?;
-    bid = bid.trim().to_string(); // 去掉末尾的换行符并转换为 String
-    Ok(bid) // 返回 String 类型
 }
 
 async fn download(bid: &str) -> Result<String> {
