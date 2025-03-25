@@ -1,5 +1,4 @@
-use anyhow::Context;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::Client;
 use serde::Deserialize;
@@ -27,7 +26,7 @@ pub struct VideoData {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("欢迎使用文件管理工具。输入 'help' 查看可用命令。");
+    println!("欢迎使用 Bilibili 音频下载工具。输入 'help' 查看可用命令。");
 
     let stdin = io::stdin();
     let mut reader = BufReader::new(stdin);
@@ -42,7 +41,7 @@ async fn main() -> Result<()> {
         match command {
             "help" => {
                 println!("可用命令：");
-                println!("  download <BID> - 下载文件");
+                println!("  download <BID> - 下载音频");
                 println!("  exit - 退出程序");
             }
             "exit" => {
@@ -50,76 +49,58 @@ async fn main() -> Result<()> {
                 break;
             }
             cmd if cmd.starts_with("download ") => {
-                let bid = cmd.split_whitespace().nth(1).unwrap_or("");
-                if bid.is_empty() {
-                    println!("请提供有效的 BID");
+                let bvid = cmd.split_whitespace().nth(1).unwrap_or("");
+                if bvid.is_empty() {
+                    println!("请提供有效的 BVID");
                     continue;
                 }
-                match download_on_bid(&bid).await {
-                    Ok(()) => {
-                        println!("下载完成");
+                match download_audio_from_bvid(&bvid).await {
+                    Ok(output_path) => {
+                        println!("音频已保存到: {}", output_path);
                     }
-                    Err(err) => println!("下载文件时出错: {}", err),
+                    Err(err) => println!("下载音频时出错: {}", err),
                 }
             }
             _ => {
                 println!("未知命令。输入 'help' 查看可用命令。");
             }
         }
-        print!("> ");
     }
     Ok(())
 }
 
-async fn download_on_bid(bid: &str) -> Result<()> {
-    let m4s_file_name = download(&bid).await?;
-    let input_output_path = build_path(m4s_file_name, bid.parse()?)?;
-    let input_path = input_output_path.0;
-    let output_path = input_output_path.1;
-    wind_song::convert_input_to_mp3(&*input_path, &*output_path);
-    delete_download_file(input_path)?;
-    println!("保存的文件路径: {}", output_path);
+async fn download_audio_from_bvid(bvid: &str) -> Result<String> {
+    let video_info = fetch_video_info(bvid).await?;
+    let (audio_url, playurl) = fetch_audio_url(&video_info.bvid, video_info.cid, 192).await?;
+    let m4s_file_name = download_audio_file(&audio_url, &playurl, &video_info.bvid).await?;
+    let output_path = convert_audio_to_mp3(&m4s_file_name, &video_info.bvid)?;
+    delete_temporary_file(&m4s_file_name)?;
+    Ok(output_path)
+}
+
+fn delete_temporary_file(file_path: &str) -> Result<()> {
+    fs::remove_file(file_path).context("删除临时文件失败")?;
     Ok(())
 }
 
-fn delete_download_file(input_path: String) -> Result<()> {
-    //删除缓存文件
-    fs::remove_file(input_path).context("删除缓存文件错误")?;
-    Ok(())
-}
-async fn get_video_info(bid: &str) -> Result<VideoData> {
-    let url = format!("https://api.bilibili.com/x/web-interface/view?bvid={}", bid);
+async fn fetch_video_info(bvid: &str) -> Result<VideoData> {
+    let url = format!("https://api.bilibili.com/x/web-interface/view?bvid={}", bvid);
     let response = reqwest::get(&url).await.context("请求视频信息失败")?;
     if !response.status().is_success() {
         return Err(anyhow!("请求视频信息失败: {}", response.status()));
     }
     let api_response: ApiResponse = response.json().await.context("解析视频信息失败")?;
-    println!("api_response: {:#?}", api_response);
+    println!("获取到的视频信息: {:#?}", api_response);
     Ok(api_response.data)
 }
 
-async fn get_audio_url(bvid: &str, cid: i64, audio_quality: i32) -> Result<(String, String)> {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "User-Agent",
-        HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"),
-    );
-    headers.insert(
-        "Origin",
-        HeaderValue::from_static("https://www.bilibili.com"),
-    );
-    headers.insert(
-        "Referer",
-        HeaderValue::from_static("https://www.bilibili.com"),
-    );
+async fn fetch_audio_url(bvid: &str, cid: i64, quality: i32) -> Result<(String, String)> {
+    let headers = create_request_headers();
     let url = format!(
         "https://api.bilibili.com/x/player/wbi/playurl?bvid={}&cid={}&qn={}&fnver=0&fnval=4048&fourk=1",
-        bvid,
-        cid,
-        audio_quality
+        bvid, cid, quality
     );
-
-    println!("audio_url: {:#?}", url);
+    println!("请求音频 URL: {:#?}", url);
     let client = Client::new();
     let response = client
         .get(&url)
@@ -137,15 +118,14 @@ async fn get_audio_url(bvid: &str, cid: i64, audio_quality: i32) -> Result<(Stri
         .context("无法获取音频流数组")?;
     println!("音频流数组长度: {}", audio_array.len());
     let last_audio = audio_array.first().context("音频流数组为空")?;
-    let final_audio_url = last_audio["baseUrl"]
+    let audio_url = last_audio["baseUrl"]
         .as_str()
         .context("无法获取音频流 URL")?
         .to_string();
-    // 拼接完整的 URL，包含原始请求的参数
-    Ok((final_audio_url,url))
+    Ok((audio_url, url))
 }
 
-async fn download_audio(final_audio_url: &str,playurl: &str, file_name: &str) -> Result<()> {
+fn create_request_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
         "User-Agent",
@@ -155,10 +135,19 @@ async fn download_audio(final_audio_url: &str,playurl: &str, file_name: &str) ->
         "Origin",
         HeaderValue::from_static("https://www.bilibili.com"),
     );
+    headers.insert(
+        "Referer",
+        HeaderValue::from_static("https://www.bilibili.com"),
+    );
+    headers
+}
+
+async fn download_audio_file(audio_url: &str, playurl: &str, file_name: &str) -> Result<String> {
+    let mut headers = create_request_headers();
     headers.insert("Referer", HeaderValue::from_str(playurl)?);
     let client = Client::new();
     let response = client
-        .get(final_audio_url)
+        .get(audio_url)
         .headers(headers)
         .send()
         .await
@@ -173,34 +162,19 @@ async fn download_audio(final_audio_url: &str,playurl: &str, file_name: &str) ->
     let mut file = File::create(&file_path).context("创建文件失败")?;
     file.write_all(&content).context("写入文件失败")?;
     println!("音频文件已保存为: {}", file_path.display());
-    Ok(())
+    Ok(file_path.to_string_lossy().into_owned())
 }
 
-async fn download(bid: &str) -> Result<String> {
-    let video_data = get_video_info(bid).await?;
-    println!("video_data: {:#?}", video_data);
-    let url = get_audio_url(&video_data.bvid, video_data.cid, 192).await?;
-    let file_name = format!("{}.m4s", video_data.bvid);
-    download_audio(&url.0,&url.1, &file_name).await?;
-    Ok(file_name)
-}
+fn convert_audio_to_mp3(input_file: &str, bvid: &str) -> Result<String> {
+    let download_dir = PathBuf::from("downloads");
+    let output_dir = PathBuf::from("output");
 
-fn build_path(m4s_file_name: String, bid: String) -> Result<(String, String)> {
-    let download_dir = PathBuf::from("downloads"); // 相对路径
-    let output_dir = PathBuf::from("output"); // 相对路径
+    fs::create_dir_all(&download_dir).context("创建下载目录失败")?;
+    fs::create_dir_all(&output_dir).context("创建输出目录失败")?;
 
-    // 创建下载目录
-    fs::create_dir_all(&download_dir).context("创建目录失败")?;
-    // 创建输出目录
-    fs::create_dir_all(&output_dir).context("创建目录失败")?;
+    let input_path = input_file;
+    let output_path = output_dir.join(format!("{}.mp3", bvid));
 
-    // 构建输入路径和输出路径
-    let input_path = download_dir.join(&m4s_file_name);
-    let output_path = output_dir.join(format!("{}.mp3", bid));
-
-    // 将路径转换为字符串
-    let input_path = input_path.to_string_lossy().into_owned();
-    let output_path = output_path.to_string_lossy().into_owned();
-
-    Ok((input_path, output_path))
+    wind_song::convert_input_to_mp3(input_path, &output_path.to_string_lossy());
+    Ok(output_path.to_string_lossy().into_owned())
 }
