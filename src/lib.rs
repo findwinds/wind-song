@@ -2,7 +2,6 @@ extern crate ffmpeg_next as ffmpeg;
 use ffmpeg::{codec, filter, format, frame, media};
 use std::path::Path;
 
-
 struct Transcoder {
     stream: usize,
     filter: filter::Graph,
@@ -16,6 +15,7 @@ fn filter(
     spec: &str,
     decoder: &codec::decoder::Audio,
     encoder: &codec::encoder::Audio,
+    debug_mode: bool,
 ) -> Result<filter::Graph, ffmpeg::Error> {
     let mut filter = filter::Graph::new();
 
@@ -40,8 +40,9 @@ fn filter(
 
     filter.output("in", 0)?.input("out", 0)?.parse(spec)?;
     filter.validate()?;
-
-    println!("{}", filter.dump());
+    if debug_mode {
+        println!("{}", filter.dump());
+    }
 
     if let Some(codec) = encoder.codec() {
         if !codec
@@ -64,12 +65,13 @@ fn transcoder<P: AsRef<Path> + ?Sized>(
     octx: &mut format::context::Output,
     path: &P,
     filter_spec: &str,
+    debug_mode: bool,
 ) -> Result<Transcoder, ffmpeg::Error> {
     let input = ictx
         .streams()
         .best(media::Type::Audio)
         .expect("could not find best audio stream");
-    let context = ffmpeg::codec::context::Context::from_parameters(input.parameters())?;
+    let context = codec::context::Context::from_parameters(input.parameters())?;
     let mut decoder = context.decoder().audio()?;
     let codec = ffmpeg::encoder::find(octx.format().codec(path, media::Type::Audio))
         .expect("failed to find encoder")
@@ -77,12 +79,12 @@ fn transcoder<P: AsRef<Path> + ?Sized>(
     let global = octx
         .format()
         .flags()
-        .contains(ffmpeg::format::flag::Flags::GLOBAL_HEADER);
+        .contains(format::flag::Flags::GLOBAL_HEADER);
 
     decoder.set_parameters(input.parameters())?;
 
     let mut output = octx.add_stream(codec)?;
-    let context = ffmpeg::codec::context::Context::from_parameters(output.parameters())?;
+    let context = codec::context::Context::from_parameters(output.parameters())?;
     let mut encoder = context.encoder().audio()?;
 
     let channel_layout = codec
@@ -91,7 +93,7 @@ fn transcoder<P: AsRef<Path> + ?Sized>(
         .unwrap_or(ffmpeg::channel_layout::ChannelLayout::STEREO);
 
     if global {
-        encoder.set_flags(ffmpeg::codec::flag::Flags::GLOBAL_HEADER);
+        encoder.set_flags(codec::flag::Flags::GLOBAL_HEADER);
     }
 
     encoder.set_rate(decoder.rate() as i32);
@@ -114,7 +116,7 @@ fn transcoder<P: AsRef<Path> + ?Sized>(
     let encoder = encoder.open_as(codec)?;
     output.set_parameters(&encoder);
 
-    let filter = filter(filter_spec, &decoder, &encoder)?;
+    let filter = filter(filter_spec, &decoder, &encoder, debug_mode)?;
 
     let in_time_base = decoder.time_base();
     let out_time_base = output.time_base();
@@ -189,14 +191,14 @@ impl Transcoder {
     }
 }
 
-pub fn convert_input_to_mp3(input_path: &str, output_path: &str) {
+pub fn convert_input_to_mp3(input_path: &str, output_path: &str, debug_mode: bool) {
     let input = input_path;
     let output = output_path;
     let filter = "anull".to_owned();
 
     let mut ictx = format::input(&input).unwrap();
     let mut octx = format::output(&output).unwrap();
-    let mut transcoder = transcoder(&mut ictx, &mut octx, &output, &filter).unwrap();
+    let mut transcoder = transcoder(&mut ictx, &mut octx, &output, &filter, debug_mode).unwrap();
 
     octx.set_metadata(ictx.metadata().to_owned());
     octx.write_header().unwrap();

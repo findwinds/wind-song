@@ -79,7 +79,7 @@ async fn download_audio_from_bvid(bvid: &str, debug_mode: bool) -> Result<String
         fetch_audio_url(&video_info.bvid, video_info.cid, 192, debug_mode).await?;
     let m4s_file_name =
         download_audio_file(&audio_url, &playurl, &video_info.bvid, debug_mode).await?;
-    let output_path = convert_audio_to_mp3(&m4s_file_name, &video_info.bvid)?;
+    let output_path = convert_audio_to_mp3(&m4s_file_name, &video_info.bvid, debug_mode)?;
     delete_temporary_file(&m4s_file_name)?;
     Ok(output_path)
 }
@@ -196,7 +196,7 @@ async fn download_audio_file(
     Ok(file_path.to_string_lossy().into_owned())
 }
 
-fn convert_audio_to_mp3(input_file: &str, bvid: &str) -> Result<String> {
+fn convert_audio_to_mp3(input_file: &str, bvid: &str, debug_mode: bool) -> Result<String> {
     let download_dir = PathBuf::from("downloads");
     let output_dir = PathBuf::from("output");
 
@@ -206,6 +206,6 @@ fn convert_audio_to_mp3(input_file: &str, bvid: &str) -> Result<String> {
     let input_path = input_file;
     let output_path = output_dir.join(format!("{}.mp3", bvid));
 
-    wind_song::convert_input_to_mp3(input_path, &output_path.to_string_lossy());
+    wind_song::convert_input_to_mp3(input_path, &output_path.to_string_lossy(), debug_mode);
     Ok(output_path.to_string_lossy().into_owned())
 }
